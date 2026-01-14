@@ -1,36 +1,41 @@
 package orchestrator
 
 import (
+	"bufio"
 	"context"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"subdomain-finder/internal/ct"
 	"subdomain-finder/internal/dns"
 	"subdomain-finder/internal/domain"
+	"subdomain-finder/internal/scraper"
 	"subdomain-finder/internal/wildcard"
 )
 
 type Orchestrator struct {
-	resolver *dns.Resolver
-	scanner  *ct.CTScanner
-	wildcard *wildcard.Detector
+	resolver     *dns.Resolver
+	ctScanner    *ct.CTScanner
+	webScraper   *scraper.WebScraper
+	wildcard     *wildcard.Detector
+	wordlistPath string
 }
 
-func New(resolver *dns.Resolver, scanner *ct.CTScanner, wd *wildcard.Detector) *Orchestrator {
+func New(resolver *dns.Resolver, ctScanner *ct.CTScanner, webScraper *scraper.WebScraper, wd *wildcard.Detector, wordlistPath string) *Orchestrator {
 	return &Orchestrator{
-		resolver: resolver,
-		scanner:  scanner,
-		wildcard: wd,
+		resolver:     resolver,
+		ctScanner:    ctScanner,
+		webScraper:   webScraper,
+		wildcard:     wd,
+		wordlistPath: wordlistPath,
 	}
 }
 
 func (o *Orchestrator) Run(ctx context.Context, target string) ([]domain.Subdomain, error) {
 	// 1. Check for wildcard
 	isWildcard, _ := o.wildcard.IsWildcard(ctx, target)
-	// If wildcard detected, we should be careful with brute force,
-	// but for this MVP we'll just note it or strictly validate resolutions.
-	// We'll skip complex logic for now and assume we just want to verify existence.
 
 	results := make(chan domain.Subdomain, 100)
 	var wg sync.WaitGroup
@@ -39,7 +44,7 @@ func (o *Orchestrator) Run(ctx context.Context, target string) ([]domain.Subdoma
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		found, err := o.scanner.Scan(ctx, target)
+		found, err := o.ctScanner.Scan(ctx, target)
 		if err == nil {
 			for _, f := range found {
 				results <- domain.Subdomain{
@@ -51,37 +56,43 @@ func (o *Orchestrator) Run(ctx context.Context, target string) ([]domain.Subdoma
 		}
 	}()
 
-	// Phase 2: Brute Force (Simple Wordlist)
-	// For production, this would read from a file.
-	// Putting a tiny in-memory list here for demonstration.
-	wordlist := []string{
-		"www", "api", "dev", "staging", "test", "mail", "admin", "vpn", "remote",
-		"demo", "shop", "blog", "app", "secure", "portal", "beta", "docs", "support",
-		"monitor", "dashboard", "server", "email", "web", "db", "auth", "gateway",
-	}
+	// Phase 2: Web Scraping
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		found, err := o.webScraper.Scan(ctx, target)
+		if err == nil {
+			for _, f := range found {
+				results <- domain.Subdomain{
+					FullDomain: f,
+					Source:     "WEB_SCRAPER",
+					FoundAt:    time.Now(),
+				}
+			}
+		}
+	}()
 
-	// Worker pool for DNS resolution
-	jobs := make(chan string, len(wordlist))
+	// Phase 3: Dynamic Brute Force (Streaming)
+	jobs := make(chan string, 100)
+	var workerWg sync.WaitGroup
 
 	// Spawn workers
-	numWorkers := 10
+	numWorkers := 20
 	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
+		workerWg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer workerWg.Done()
 			for subPrefix := range jobs {
 				fullDomain := subPrefix + "." + target
+
 				if ctx.Err() != nil {
 					return
 				}
 
 				// Verify if it resolves
 				ip, found := o.resolver.Resolve(ctx, fullDomain)
+
 				if found {
-					// If the wildcard detected earlier resolves to the SAME IP, ignore it?
-					// Simpler: if wildcard is active, we might get false positives.
-					// We'll ignore wildcard filtering complexity for a basic "production" task
-					// unless we see specific matching IP logic.
 					if !isWildcard {
 						results <- domain.Subdomain{
 							FullDomain: fullDomain,
@@ -95,13 +106,40 @@ func (o *Orchestrator) Run(ctx context.Context, target string) ([]domain.Subdoma
 		}()
 	}
 
-	// Feed jobs
-	for _, w := range wordlist {
-		jobs <- w
-	}
-	close(jobs)
+	// File Reader Goroutine
+	// Independent of 'wg' (which tracks result producers), but we must ensure workers finish.
+	// We'll manage worker wait here.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Open file
+		file, err := os.Open(o.wordlistPath)
+		if err == nil {
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				word := strings.TrimSpace(scanner.Text())
+				if word != "" {
+					select {
+					case jobs <- word:
+					case <-ctx.Done():
+						file.Close()
+						close(jobs)
+						workerWg.Wait() // Wait for workers to clean up
+						return
+					}
+				}
+			}
+			file.Close()
+		}
 
-	// Wait for all producers to finish
+		// Done reading or failed to open -> close jobs
+		close(jobs)
+
+		// Wait for workers to drain jobs
+		workerWg.Wait()
+	}()
+
+	// Wait for all phases to finish
 	go func() {
 		wg.Wait()
 		close(results)
@@ -110,11 +148,9 @@ func (o *Orchestrator) Run(ctx context.Context, target string) ([]domain.Subdoma
 	// Collect and deduplicate
 	uniqueResults := make(map[string]domain.Subdomain)
 	for res := range results {
-		// Verify CT results against DNS if they came from CT ?
-		// Often CT logs have old domains. Let's verify them.
-		if res.Source == domain.ResultTypeCT {
-			// Optionally verify if it still resolves
-			// For speed, let's assume we want valid ones only
+		// Verify results if needed (already verified by DNS worker or coming from trusted sources)
+		// Re-verify CT/Scraper just in case? For speed, we previously did. Let's keep it consistent.
+		if res.Source == domain.ResultTypeCT || res.Source == "WEB_SCRAPER" {
 			if ip, found := o.resolver.Resolve(ctx, res.FullDomain); found {
 				res.IP = ip
 				uniqueResults[res.FullDomain] = res

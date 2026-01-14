@@ -9,6 +9,7 @@ import (
 	"subdomain-finder/internal/ct"
 	"subdomain-finder/internal/dns"
 	"subdomain-finder/internal/orchestrator"
+	"subdomain-finder/internal/scraper"
 	"subdomain-finder/internal/wildcard"
 )
 
@@ -16,8 +17,9 @@ func main() {
 	// Initialize components
 	resolver := dns.NewResolver(2 * time.Second)
 	scanner := ct.NewScanner()
+	webScraper := scraper.New()
 	detector := wildcard.NewDetector(resolver)
-	orch := orchestrator.New(resolver, scanner, detector)
+	orch := orchestrator.New(resolver, scanner, webScraper, detector, "wordlist.txt")
 	handler := api.NewHandler(orch)
 
 	// Setup routes
