@@ -50,3 +50,5 @@ npm run dev
 
 ---
 *By running this project, you acknowledge the warnings above.*
+
+**Created by Sidharth** • [sidharth.tech](https://sidharth.tech)
