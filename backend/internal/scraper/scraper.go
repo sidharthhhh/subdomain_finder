@@ -18,7 +18,7 @@ type WebScraper struct {
 func New() *WebScraper {
 	return &WebScraper{
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 	}
 }

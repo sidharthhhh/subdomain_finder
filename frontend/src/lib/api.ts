@@ -18,6 +18,8 @@ export const api = {
     scan: async (domain: string): Promise<ScanResponse> => {
         const response = await axios.post<ScanResponse>(`${API_BASE_URL}/scan`, {
             domain,
+        }, {
+            timeout: 300000, // 5 minutes timeout for massive scans (Google, etc)
         });
         return response.data;
     },

@@ -19,10 +19,11 @@ func NewDetector(resolver *dns.Resolver) *Detector {
 }
 
 // IsWildcard checks if the domain resolves to a generic address for random subdomains
-func (d *Detector) IsWildcard(ctx context.Context, domain string) (bool, string) {
+func (d *Detector) IsWildcard(ctx context.Context, domain string) (bool, error) {
 	// Generate a random subdomain that definitely shouldn't exist
 	randSub := fmt.Sprintf("wildcard-test-%d.%s", rand.Int63(), domain)
 
-	ip, found := d.resolver.Resolve(ctx, randSub)
-	return found, ip
+	_, err := d.resolver.Resolve(ctx, randSub)
+	found := (err == nil)
+	return found, nil
 }

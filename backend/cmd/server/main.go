@@ -15,11 +15,21 @@ import (
 
 func main() {
 	// Initialize components
-	resolver := dns.NewResolver(2 * time.Second)
+	// Increased DNS timeout to 4s to reduce packet loss under load
+	resolver := dns.NewResolver(4 * time.Second)
 	scanner := ct.NewScanner()
 	webScraper := scraper.New()
 	detector := wildcard.NewDetector(resolver)
-	orch := orchestrator.New(resolver, scanner, webScraper, detector, "wordlist.txt")
+
+	orch := orchestrator.New(
+		resolver,
+		scanner,
+		webScraper,
+		detector,
+		orchestrator.WithWordlist("wordlist.txt"),
+		orchestrator.WithWorkers(10), // Reduced to 10 to prevent socket exhaustion/IO timeouts
+	)
+
 	handler := api.NewHandler(orch)
 
 	// Setup routes
