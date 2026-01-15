@@ -96,7 +96,8 @@ func (s *CTScanner) scanCrtSh(ctx context.Context, targetDomain string) ([]strin
 		for _, name := range names {
 			name = strings.TrimSpace(name)
 			name = strings.TrimPrefix(name, "*.")
-			if strings.HasSuffix(name, targetDomain) {
+			// Strict matching: must be "x.com" or "*.x.com" (ending in .x.com)
+			if name == targetDomain || strings.HasSuffix(name, "."+targetDomain) {
 				uniqueSubs[name] = struct{}{}
 			}
 		}
@@ -134,6 +135,14 @@ func (s *CTScanner) scanAnubis(ctx context.Context, targetDomain string) ([]stri
 		return nil, err
 	}
 
-	// Anubis returns just a string array, usually clean
-	return found, nil
+	// Filter Anubis results strictly too
+	var clean []string
+	for _, sub := range found {
+		sub = strings.TrimSpace(sub)
+		if sub == targetDomain || strings.HasSuffix(sub, "."+targetDomain) {
+			clean = append(clean, sub)
+		}
+	}
+
+	return clean, nil
 }
