@@ -34,6 +34,7 @@ func main() {
 
 	// Setup routes
 	http.HandleFunc("/scan", handler.HandleScan)
+	http.HandleFunc("/health", handler.HandleHealth)
 
 	// Start server
 	log.Println("Starting Subdomain Finder API on :8080")
