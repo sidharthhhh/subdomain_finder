@@ -48,6 +48,15 @@ npm run dev
 # Open http://localhost:5173 to use the tool
 ```
 
+## ☁️ Deployment on Render
+
+To deploy the **Backend** on Render as a Web Service, use the following settings:
+
+- **Build Command:** `cd backend && go mod tidy && go build -o server ./cmd/server`
+- **Start Command:** `cd backend && ./server`
+
+*(Alternatively, if you set the **Root Directory** to `backend` in your Render settings, use `go mod tidy && go build -o server ./cmd/server` for the Build Command, and `./server` for the Start Command).*
+
 ---
 *By running this project, you acknowledge the warnings above.*
 
